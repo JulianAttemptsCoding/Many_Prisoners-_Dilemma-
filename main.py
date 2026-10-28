@@ -472,9 +472,8 @@ def simulate_game(bot1, bot2, rounds=200):
     return bot1_score, bot2_score
 
 
-# Main simulation function
-def main():
-    # Define bots to compete
+def get_bots():
+    """Every competing strategy as (name, function, description)."""
     bots = [
         ("Persistent Alternator", persistent_alternator,
          "Alternates between split and steal but defects twice in a row if the opponent cooperates twice consecutively."),
@@ -575,8 +574,28 @@ def main():
         ("Probing Tit-for-Tat", probing_tit_for_tat,
          "Starts with cooperation but occasionally probes the opponent by defecting once every 10 rounds."),
     ]
+    return bots
 
-    # Initialize scores for each bot
+
+def round_robin(bots, rounds=200, seed=None):
+    """Every bot plays every other bot exactly once. Returns {name: total score}.
+
+    Seeded, so the same seed always gives the same tournament (strategies and the 5% error use `random`).
+    """
+    if seed is not None:
+        random.seed(seed)
+    bot_scores = {name: 0 for name, _, _ in bots}
+    for i, (name1, bot1, _) in enumerate(bots):
+        for name2, bot2, _ in bots[i + 1:]:
+            score1, score2 = simulate_game(bot1, bot2, rounds)
+            bot_scores[name1] += score1
+            bot_scores[name2] += score2
+    return bot_scores
+
+
+def classic_tournament(bots):
+    """The original tournament, kept as written: random 150-250 rounds, and for each pair a 50%
+    chance the first bot plays itself instead (both sides of that self-match count toward it)."""
     bot_scores = {name: 0 for name, _, _ in bots}
 
     rounds = random.randint(150, 250)  # Randomly choose rounds between 150 and 250
@@ -597,16 +616,60 @@ def main():
                 score1, score2 = simulate_game(bot1, opponent_bot, rounds)
                 bot_scores[name1] += score1
                 bot_scores[opponent_name] += score2
+    return bot_scores, rounds
 
-    # Print results in descending order of scores
-    print(f"Simulation Results ({rounds} rounds):")
+
+def print_results(bots, bot_scores, title):
+    print(title)
     # Sort the bots by score in descending order
     sorted_bots = sorted(bot_scores.items(), key=lambda x: x[1], reverse=True)
-
-    for name, score in sorted_bots:
+    for rank, (name, score) in enumerate(sorted_bots, 1):
         # Retrieve the strategy description from the original list
         strategy_desc = next(desc for n, _, desc in bots if n == name)
-        print(f"{name} | {strategy_desc} | Total Score: {score}")
+        print(f"{rank:>2}. {name} | {strategy_desc} | Total Score: {score}")
+
+
+# Main simulation function
+def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Iterated prisoner's dilemma tournament.")
+    parser.add_argument("--seed", type=int, default=7, help="RNG seed (default 7)")
+    parser.add_argument("--rounds", type=int, default=200, help="rounds per match (default 200)")
+    parser.add_argument("--repeats", type=int, default=1,
+                        help="run this many seeds (seed, seed+1, ...) and summarise who wins")
+    parser.add_argument("--classic", action="store_true", help="run the original tournament instead")
+    args = parser.parse_args()
+    bots = get_bots()
+
+    if args.classic:
+        random.seed(args.seed)
+        bot_scores, rounds = classic_tournament(bots)
+        print_results(bots, bot_scores, f"Classic tournament ({rounds} rounds, seed {args.seed}):")
+        return
+
+    if args.repeats == 1:
+        bot_scores = round_robin(bots, args.rounds, args.seed)
+        print_results(bots, bot_scores, f"Round-robin: {len(bots)} bots, {args.rounds} rounds per match, "
+                                        f"5% move noise, seed {args.seed}")
+        return
+
+    wins, totals = {}, {name: 0 for name, _, _ in bots}
+    for s in range(args.seed, args.seed + args.repeats):
+        bot_scores = round_robin(bots, args.rounds, s)
+        winner = max(bot_scores, key=bot_scores.get)
+        wins[winner] = wins.get(winner, 0) + 1
+        for name, score in bot_scores.items():
+            totals[name] += score
+    print(f"Round-robin x {args.repeats} seeds ({args.seed}-{args.seed + args.repeats - 1}), "
+          f"{args.rounds} rounds per match")
+    print("Wins per bot:")
+    for name, n in sorted(wins.items(), key=lambda x: -x[1]):
+        print(f"  {name}: {n}")
+    print("Top 10 by mean total score:")
+    for name, score in sorted(totals.items(), key=lambda x: -x[1])[:10]:
+        print(f"  {name}: {score / args.repeats:,.0f}")
+
 
 if __name__ == "__main__":
     main()
